@@ -179,6 +179,11 @@ function Fretboard({ tuning=STD_TUNING, highlights=[], arcPair=null, leftHanded=
           <stop offset="60%" stopColor="#29B6F6"/>
           <stop offset="100%" stopColor="#0277BD"/>
         </radialGradient>
+        <radialGradient id="grd-hint" cx="35%" cy="35%">
+          <stop offset="0%" stopColor="#FFE082"/>
+          <stop offset="60%" stopColor="#FFB300"/>
+          <stop offset="100%" stopColor="#FF6F00"/>
+        </radialGradient>
         <filter id="gw-root" x="-80%" y="-80%" width="260%" height="260%">
           <feGaussianBlur stdDeviation="4" result="b"/>
           <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -253,23 +258,28 @@ function Fretboard({ tuning=STD_TUNING, highlights=[], arcPair=null, leftHanded=
           const cx = sx(f) - fretW/2;
           const cy = sy(s);
           const isRoot = role === "root";
+          const isHint = role === "wrong-hint";
           const jKey = `${role}-${s}-${f}`;
+          const gradFill = isRoot ? "url(#grd-root)" : isHint ? "url(#grd-hint)" : "url(#grd-target)";
+          const haloFill = isRoot ? "rgba(255,112,67,0.15)" : isHint ? "rgba(255,179,0,0.2)" : "rgba(41,182,246,0.12)";
+          const filtId = isRoot ? "url(#gw-root)" : "url(#gw-target)";
           return (
             <motion.g
               key={jKey}
               initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
+              animate={{ scale: isHint ? [1, 1.3, 1] : 1, opacity: 1 }}
               exit={{ scale: 0, opacity: 0 }}
-              transition={{ type:"spring", stiffness:460, damping:22, delay: isRoot ? 0 : 0.08 }}
+              transition={isHint
+                ? { duration: 0.5, times:[0,0.4,1] }
+                : { type:"spring", stiffness:460, damping:22, delay: isRoot ? 0 : 0.08 }}
               style={{ originX: cx, originY: cy }}
             >
               {/* Glow halo */}
-              <circle cx={cx} cy={cy} r={noteR+5}
-                fill={isRoot ? "rgba(255,112,67,0.15)" : "rgba(41,182,246,0.12)"}/>
+              <circle cx={cx} cy={cy} r={noteR+5} fill={haloFill}/>
               {/* Main jewel */}
               <circle cx={cx} cy={cy} r={noteR}
-                fill={isRoot ? "url(#grd-root)" : "url(#grd-target)"}
-                filter={isRoot ? "url(#gw-root)" : "url(#gw-target)"}/>
+                fill={gradFill}
+                filter={filtId}/>
               {/* Specular */}
               <circle cx={cx-noteR*0.27} cy={cy-noteR*0.27} r={noteR*0.26} fill="rgba(255,255,255,0.55)"/>
               {/* Label */}
@@ -751,8 +761,12 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const [streak, setStreak] = useState(0);
   const [score, setScore] = useState({ correct:0, total:0 });
   const [revealMode, setRevealMode] = useState("learning"); // learning | blind
+  const [rootFirst, setRootFirst] = useState(false);       // root-first mode
+  const [stage, setStage] = useState("root");              // "root" | "interval"
+  const [rootHit, setRootHit] = useState(false);           // root confirmed
   const [zenMode, setZenMode] = useState(false);          // zen: fretboard hidden
   const [hitPos, setHitPos] = useState(null);
+  const [wrongHint, setWrongHint] = useState(false);      // "try the shown position" hint
   const [showStats, setShowStats] = useState(false);
   const prevMidiRef = useRef({ midi:-1, frames:0 });
   const questionStartRef = useRef(null);
@@ -785,10 +799,13 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
 
     setQuestion({ rootStr, rootFret, targetStr:pick.string, targetFret:pick.fret, intervalIdx:iv });
     setHitPos(null);
+    setRootHit(false);
+    setWrongHint(false);
+    setStage(rootFirst ? "root" : "interval");
     prevMidiRef.current = { midi:-1, frames:0 };
     questionStartRef.current = Date.now();
     setStatus("listening");
-  }, [intervals, settings, tuning]);
+  }, [intervals, settings, tuning, rootFirst]);
 
   useEffect(() => { genQuestion(); }, []);
 
@@ -800,10 +817,23 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
     if (st.frames < 3) return;
     st.frames = 0;
 
-    const targetMidi = getMidi(question.targetStr, question.targetFret, tuning);
-    if (Math.abs(midi - targetMidi) <= 1) {
-      // Find physical hit position
+    // ── ROOT-FIRST MODE: stage 1 — confirm root ──────────────────────────
+    if (rootFirst && stage === "root") {
       const rootMidi = getMidi(question.rootStr, question.rootFret, tuning);
+      if (Math.abs(midi - rootMidi) <= 1) {
+        haptic("correct");
+        setRootHit(true);
+        setStage("interval");
+        prevMidiRef.current = { midi:-1, frames:0 };
+      }
+      return;
+    }
+
+    // ── INTERVAL STAGE ───────────────────────────────────────────────────
+    const targetMidi = getMidi(question.targetStr, question.targetFret, tuning);
+
+    if (Math.abs(midi - targetMidi) <= 1) {
+      // Find physical hit position (closest to root, within range)
       let best = null; let bestScore = Infinity;
       for (let s=0; s<6; s++) {
         for (let f=settings.minFret; f<=settings.maxFret; f++) {
@@ -815,9 +845,21 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
           }
         }
       }
+
+      // ── LEARNING MODE: only accept the EXACT shown position ──────────
+      if (revealMode === "learning" && best) {
+        const onTarget = best.string === question.targetStr && best.fret === question.targetFret;
+        if (!onTarget) {
+          // Right pitch, wrong position — gently flash the shown target
+          setWrongHint(true);
+          setTimeout(() => setWrongHint(false), 900);
+          return;
+        }
+      }
+
       if (best) setHitPos(best);
 
-      // Record reaction time for weak-spot tracking
+      // Reaction time tracking
       const rt = questionStartRef.current ? Date.now()-questionStartRef.current : 0;
       const key = `${question.intervalIdx}-${(best||question).string}-${(best||question).fret}`;
       const prev = posStatsRef.current[key] || {count:0,totalMs:0,avgMs:0,weak:false};
@@ -830,7 +872,8 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
       setStatus("correct");
       setStreak(s=>s+1);
       setScore(s=>({ correct:s.correct+1, total:s.total+1 }));
-      setTimeout(genQuestion, revealMode==="blind" ? 2000 : 1500);
+      setTimeout(genQuestion, revealMode==="blind" ? 2200 : 1600);
+
     } else {
       const rootMidi = getMidi(question.rootStr, question.rootFret, tuning);
       if (Math.abs(midi-rootMidi) > 1) {
@@ -841,7 +884,7 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
         setTimeout(()=>setStatus("listening"), 450);
       }
     }
-  }, [status, question, tuning, settings, revealMode, genQuestion]);
+  }, [status, question, tuning, settings, revealMode, rootFirst, stage, genQuestion]);
 
   const { rms } = useAudioEngine({ onPitchDetected, enabled: audioEnabled });
 
@@ -857,9 +900,13 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   })();
 
   const highlights = question ? [
-    { string:question.rootStr, fret:question.rootFret, role:"root", label:"R" },
+    {
+      string:question.rootStr, fret:question.rootFret, role:"root", label:"R",
+      // In root-first mode stage "root": make root pulse more visibly (handled by breathe CSS on root)
+    },
     ...(targetDisplayPos && shouldReveal ? [{
-      string:targetDisplayPos.string, fret:targetDisplayPos.fret, role:"target",
+      string:targetDisplayPos.string, fret:targetDisplayPos.fret,
+      role: wrongHint ? "wrong-hint" : "target",
       label: settings.showNoteNames
         ? midiToNote(getMidi(targetDisplayPos.string, targetDisplayPos.fret, tuning))
         : INTERVAL_LABELS[question.intervalIdx],
@@ -908,6 +955,13 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
                   border:revealMode===m.id?"1px solid rgba(255,112,67,0.4)":"1px solid transparent",
                 }}>{m.label}</button>
             ))}
+            <button onClick={()=>setRootFirst(r=>!r)}
+              className="px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all"
+              style={{
+                background:rootFirst?"rgba(102,187,106,0.15)":"rgba(0,0,0,0.05)",
+                color:rootFirst?"#2E7D32":"#777",
+                border:rootFirst?"1px solid rgba(102,187,106,0.4)":"1px solid transparent",
+              }}>🎯 根音优先</button>
             {revealMode === "blind" && (
               <button onClick={()=>setZenMode(z=>!z)}
                 className="px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all"
@@ -923,7 +977,9 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
         {/* Main question display */}
         <motion.div className="text-center py-4" key={question?.intervalIdx+"-"+question?.rootStr+"-"+question?.rootFret}
           initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:0.25}}>
-          <div className="text-xs text-gray-400 mb-1 tracking-widest uppercase">Find the interval</div>
+          <div className="text-xs text-gray-400 mb-1 tracking-widest uppercase">
+            {rootFirst && !rootHit ? "① First — find the root" : "Find the interval"}
+          </div>
           <div className="flex items-baseline justify-center gap-2">
             <span className="font-black" style={{
               fontSize:fretboardHidden?96:52,
