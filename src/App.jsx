@@ -773,13 +773,9 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const [streak, setStreak] = useState(0);
   const [score, setScore] = useState({ correct: 0, total: 0 });
   const [showIntervalPicker, setShowIntervalPicker] = useState(false);
+  // 显示模式：learning = 一开始就显示目标音程；blind = 弹对之后才显示
+  const [revealMode, setRevealMode] = useState("learning"); // "learning" | "blind"
   const prevMidiRef = useRef(null);
-
-  const { buildHighlightsForInterval } = useFretboardLogic({
-    tuning,
-    minFret: settings.minFret,
-    maxFret: settings.maxFret,
-  });
 
   const genQuestion = useCallback(() => {
     // Pick random root
@@ -835,42 +831,76 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const rootNote = question ? midiToNote(getMidi(question.rootStr, question.rootFret, tuning)) : "—";
   const intervalName = question ? INTERVAL_LABELS[question.intervalIdx] : "—";
 
-  const rootPos = question
-    ? { string: question.rootStr, fret: question.rootFret }
-    : null;
+  const shouldRevealTarget =
+    revealMode === "learning" || (revealMode === "blind" && status === "correct");
 
-  const { highlights, arcPairs } = useMemo(() => {
-    if (!question || !rootPos) return { highlights: [], arcPairs: [] };
-    return buildHighlightsForInterval(rootPos, question.intervalIdx, {
-      showNoteNames: settings.showNoteNames,
-      rootLabel: rootNote,
-      intervalLabel: INTERVAL_LABELS[question.intervalIdx],
-    });
-  }, [question, rootPos, buildHighlightsForInterval, settings.showNoteNames, rootNote]);
+  const highlights = question ? [
+    {
+      string: question.rootStr,
+      fret: question.rootFret,
+      role: "root",
+      label: "R",
+    },
+    ...(shouldRevealTarget ? [{
+      string: question.targetStr,
+      fret: question.targetFret,
+      role: "target",
+      label: INTERVAL_LABELS[question.intervalIdx],
+    }] : []),
+  ] : [];
 
-  const arcPair = status === "correct" && arcPairs.length > 0 ? arcPairs[0] : null;
+  const arcPair = (shouldRevealTarget && question) ? {
+    from: { string: question.rootStr, fret: question.rootFret },
+    to: { string: question.targetStr, fret: question.targetFret },
+  } : null;
 
   return (
     <TrainerLayout title="Interval Trainer" subtitle="Find the interval" status={status} streak={streak} score={score} rms={rms} audioEnabled={audioEnabled}>
-      {/* Interval selector */}
-      <div className="flex flex-wrap gap-2 justify-center mb-4">
-        {INTERVAL_LABELS.slice(1).map((label, i) => {
-          const iv = i + 1;
-          const sel = intervals.includes(iv);
-          return (
-            <button key={iv}
-              onClick={() => setIntervals(prev =>
-                sel && prev.length > 1 ? prev.filter(x => x !== iv) : [...new Set([...prev, iv])].sort((a,b)=>a-b)
-              )}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
-              style={{
-                background: sel ? "linear-gradient(135deg,#29B6F6,#0277BD)" : "rgba(0,0,0,0.06)",
-                color: sel ? "white" : "#666",
-                border: sel ? "1px solid rgba(41,182,246,0.4)" : "1px solid transparent",
-              }}
-            >{label}</button>
-          );
-        })}
+      {/* Interval selector + 显示模式切换 */}
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="flex flex-wrap gap-2 justify-center">
+          {INTERVAL_LABELS.slice(1).map((label, i) => {
+            const iv = i + 1;
+            const sel = intervals.includes(iv);
+            return (
+              <button key={iv}
+                onClick={() => setIntervals(prev =>
+                  sel && prev.length > 1 ? prev.filter(x => x !== iv) : [...new Set([...prev, iv])].sort((a,b)=>a-b)
+                )}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold transition-all"
+                style={{
+                  background: sel ? "linear-gradient(135deg,#29B6F6,#0277BD)" : "rgba(0,0,0,0.06)",
+                  color: sel ? "white" : "#666",
+                  border: sel ? "1px solid rgba(41,182,246,0.4)" : "1px solid transparent",
+                }}
+              >{label}</button>
+            );
+          })}
+        </div>
+        <div className="flex justify-center gap-2">
+          <button
+            onClick={() => setRevealMode("learning")}
+            className="px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all"
+            style={{
+              background: revealMode === "learning" ? "rgba(102,187,106,0.18)" : "rgba(0,0,0,0.05)",
+              color: revealMode === "learning" ? "#2E7D32" : "#777",
+              border: revealMode === "learning" ? "1px solid rgba(102,187,106,0.4)" : "1px solid transparent",
+            }}
+          >
+            学习模式
+          </button>
+          <button
+            onClick={() => setRevealMode("blind")}
+            className="px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all"
+            style={{
+              background: revealMode === "blind" ? "rgba(255,112,67,0.16)" : "rgba(0,0,0,0.05)",
+              color: revealMode === "blind" ? "#E64A19" : "#777",
+              border: revealMode === "blind" ? "1px solid rgba(255,112,67,0.45)" : "1px solid transparent",
+            }}
+          >
+            盲练模式
+          </button>
+        </div>
       </div>
 
       {/* Question display */}
