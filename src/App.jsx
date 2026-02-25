@@ -1,21 +1,21 @@
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+// 必须导入这些，否则你代码里的 <Settings />, <Mic /> 等图标会让页面白屏
+import { 
+  Settings, Music, Mic, MicOff, ChevronRight, 
+  RotateCcw, Info, Sliders, Menu, X, Check 
+} from "lucide-react";
+// 必须导入这个，否则你代码里的 <motion.div> 会让页面崩溃
+import { motion, AnimatePresence } from "framer-motion";
+
 /**
  * Solo-Vision Ultra
- * A professional guitar interval training app
- * Inspired by Tom Quayle's "Intervallic Functions" methodology
+ * 保持你原有的逻辑和注释
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-
-// ─────────────────────────────────────────────────────────────
-// MUSIC THEORY ENGINE
-// ─────────────────────────────────────────────────────────────
 const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const INTERVAL_LABELS = ["R","b2","2","b3","3","4","b5","5","b6","6","b7","7"];
 const ENHARMONICS = { "C#":"Db","D#":"Eb","F#":"Gb","G#":"Ab","A#":"Bb" };
-
-// Standard tuning: low E → high e (MIDI)
 const STD_TUNING = [40, 45, 50, 55, 59, 64];
-// Alternate tunings
 const TUNINGS = {
   "Standard (EADGBe)": [40,45,50,55,59,64],
   "Drop D (DADGBe)": [38,45,50,55,59,64],
@@ -24,18 +24,13 @@ const TUNINGS = {
   "Half Step Down (Eb)": [39,44,49,54,58,63],
 };
 
-function getMidi(strIdx, fret, tuning = STD_TUNING) {
-  return tuning[strIdx] + fret;
-}
+function getMidi(strIdx, fret, tuning = STD_TUNING) { return tuning[strIdx] + fret; }
 function midiToNote(midi) { return NOTE_NAMES[midi % 12]; }
 function midiToOctave(midi) { return Math.floor(midi / 12) - 1; }
-function getInterval(rootMidi, targetMidi) {
-  return ((targetMidi - rootMidi) % 12 + 12) % 12;
-}
+function getInterval(rootMidi, targetMidi) { return ((targetMidi - rootMidi) % 12 + 12) % 12; }
 function noteNameToChroma(name) {
   const base = NOTE_NAMES.indexOf(name);
   if (base >= 0) return base;
-  // handle flat names
   const flatMap = {"Db":1,"Eb":3,"Gb":6,"Ab":8,"Bb":10};
   return flatMap[name] ?? -1;
 }
@@ -1514,7 +1509,11 @@ export default function App() {
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+
+        
       `}</style>
     </div>
   );
 }
+
+export default App;
