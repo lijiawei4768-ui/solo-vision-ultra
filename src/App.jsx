@@ -777,7 +777,11 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const [revealMode, setRevealMode] = useState("learning"); // "learning" | "blind"
   // 记录“你实际弹对”的物理位置，用来对齐弧线和高亮
   const [hitPos, setHitPos] = useState(null); // {string, fret} | null
-  const prevMidiRef = useRef(null);
+  // 简单的 Listen & Wait：需要连续若干帧检测到相同 MIDI 才算“稳定命中”
+  const prevMidiRef = useRef({ midi: null, frames: 0 });
+  const questionStartRef = useRef(null);
+  const lastTargetKeyRef = useRef(null);
+  const posStatsRef = useRef({}); // "interval-string-fret" -> {count,totalMs,avgMs,weak}
 
   const genQuestion = useCallback(() => {
     // Pick random root
@@ -798,10 +802,20 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
     }
     if (!candidates.length) { genQuestion(); return; }
     // Prefer same string or adjacent
-    const pref = candidates.filter(c => Math.abs(c.string - rootStr) <= 2);
-    const pick = (pref.length ? pref : candidates)[Math.floor(Math.random() * (pref.length || candidates.length))];
+    let pool = candidates.filter(c => Math.abs(c.string - rootStr) <= 2);
+    if (!pool.length) pool = candidates;
+    // 避免连续两题命中完全同一位置
+    if (lastTargetKeyRef.current) {
+      const filtered = pool.filter(c =>
+        `${iv}-${c.string}-${c.fret}` !== lastTargetKeyRef.current
+      );
+      if (filtered.length) pool = filtered;
+    }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    lastTargetKeyRef.current = `${iv}-${pick.string}-${pick.fret}`;
     setQuestion({ rootStr, rootFret, targetStr: pick.string, targetFret: pick.fret, intervalIdx: iv });
     setHitPos(null);
+    questionStartRef.current = Date.now();
     setStatus("listening");
   }, [intervals, settings, tuning]);
 
@@ -810,16 +824,27 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const onPitchDetected = useCallback((freq) => {
     if (status !== "listening" || !question) return;
     const midi = freqToMidi(freq);
-    if (midi === prevMidiRef.current) return;
-    prevMidiRef.current = midi;
+    // Listen & Wait：需要连续若干帧检测到同一 MIDI，才认为稳定
+    const st = prevMidiRef.current;
+    if (midi === st.midi) {
+      st.frames += 1;
+    } else {
+      st.midi = midi;
+      st.frames = 1;
+    }
+    if (st.frames < 3) return;
+    st.frames = 0;
+
     const targetMidi = getMidi(question.targetStr, question.targetFret, tuning);
     if (Math.abs(midi - targetMidi) <= 1) {
       // 找到最贴近你实际弹出的物理位置，用来展示弧线和高亮
       const candidates = [];
+      const rootMidi = getMidi(question.rootStr, question.rootFret, tuning);
+      const maxSemitoneFromRoot = 12 * 2; // 限制在 2 个八度内
       for (let s = 0; s < 6; s++) {
         for (let f = settings.minFret; f <= settings.maxFret; f++) {
           const fm = getMidi(s, f, tuning);
-          if (Math.abs(fm - midi) <= 1) {
+          if (Math.abs(fm - midi) <= 1 && Math.abs(fm - rootMidi) <= maxSemitoneFromRoot) {
             candidates.push({ string: s, fret: f });
           }
         }
@@ -829,6 +854,7 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
       for (const c of candidates) {
         const ds = Math.abs(c.string - question.rootStr);
         const df = Math.abs(c.fret - question.rootFret);
+        if (ds > 2 || df > 5) continue; // 距离太远的不认为是“合理命中”
         const score = ds * 2 + df; // 稍微偏向“同弦附近”
         if (score < bestScore) {
           bestScore = score;
@@ -836,6 +862,18 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
         }
       }
       if (best) setHitPos(best);
+
+      // 记录反应时间，构建“错词本”统计
+      if (questionStartRef.current != null) {
+        const rt = Date.now() - questionStartRef.current;
+        const key = `${question.intervalIdx}-${(best || question).string}-${(best || question).fret}`;
+        const stats = posStatsRef.current[key] || { count: 0, totalMs: 0, avgMs: 0, weak: false };
+        stats.count += 1;
+        stats.totalMs += rt;
+        stats.avgMs = stats.totalMs / stats.count;
+        stats.weak = stats.avgMs > 2000; // 平均反应超过 2 秒视为“生词”
+        posStatsRef.current[key] = stats;
+      }
 
       setStatus("correct");
       setStreak(s => s + 1);
