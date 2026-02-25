@@ -1224,6 +1224,114 @@ function FretboardContainer({ settings, highlights, tuning, arcPair }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// FRETBOARD LOGIC HOOK (两点系统)
+// ─────────────────────────────────────────────────────────────
+const FB_STRING_COUNT = 6;
+
+function fbNormInterval(semitones) {
+  return ((semitones % 12) + 12) % 12;
+}
+
+function fbComputeIntervalVectors(targetInterval, tuning) {
+  const refString = 2; // 3 弦为参考
+  const vectors = [];
+
+  for (let dString = -3; dString <= 3; dString++) {
+    const s2 = refString + dString;
+    if (s2 < 0 || s2 >= FB_STRING_COUNT) continue;
+
+    for (let dFret = -12; dFret <= 12; dFret++) {
+      const testFret = 5;
+      const rootMidi = getMidi(refString, testFret, tuning);
+      const targetMidi = getMidi(s2, testFret + dFret, tuning);
+      const iv = fbNormInterval(targetMidi - rootMidi);
+      if (iv === targetInterval) {
+        const cost = Math.abs(dString) + Math.abs(dFret);
+        vectors.push({ dString, dFret, cost });
+      }
+    }
+  }
+
+  vectors.sort((a, b) => a.cost - b.cost);
+  const unique = [];
+  const seen = new Set();
+  for (const v of vectors) {
+    const key = `${v.dString}:${v.dFret}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push({ dString: v.dString, dFret: v.dFret });
+    }
+  }
+  return unique;
+}
+
+function useFretboardLogic({ tuning, minFret, maxFret }) {
+  const intervalVectorTable = useMemo(() => {
+    const table = {};
+    for (let iv = 0; iv < 12; iv++) {
+      table[iv] = fbComputeIntervalVectors(iv, tuning);
+    }
+    return table;
+  }, [tuning]);
+
+  const getIntervalPositionsFromRoot = useCallback(
+    (rootPos, targetInterval) => {
+      if (!rootPos) return [];
+      const iv = fbNormInterval(targetInterval);
+      const vectors = intervalVectorTable[iv] || [];
+      const results = [];
+
+      for (const { dString, dFret } of vectors) {
+        const s2 = rootPos.string + dString;
+        const f2 = rootPos.fret + dFret;
+        if (s2 < 0 || s2 >= FB_STRING_COUNT) continue;
+        if (f2 < minFret || f2 > maxFret) continue;
+
+        const rootMidi = getMidi(rootPos.string, rootPos.fret, tuning);
+        const targetMidi = getMidi(s2, f2, tuning);
+        if (fbNormInterval(targetMidi - rootMidi) === iv) {
+          results.push({ string: s2, fret: f2 });
+        }
+      }
+
+      return results;
+    },
+    [intervalVectorTable, tuning, minFret, maxFret]
+  );
+
+  const buildHighlightsForInterval = useCallback(
+    (rootPos, targetInterval, { showNoteNames = false, rootLabel = "R", intervalLabel = "" } = {}) => {
+      if (!rootPos) return { highlights: [], arcPairs: [] };
+
+      const targets = getIntervalPositionsFromRoot(rootPos, targetInterval);
+      const highlights = [
+        {
+          string: rootPos.string,
+          fret: rootPos.fret,
+          role: "root",
+          label: showNoteNames ? rootLabel : "R",
+        },
+        ...targets.map((t) => ({
+          ...t,
+          role: "target",
+          label: intervalLabel || undefined,
+        })),
+      ];
+
+      const arcPairs = targets.map((t) => ({
+        from: rootPos,
+        to: t,
+      }));
+
+      return { highlights, arcPairs };
+    },
+    [getIntervalPositionsFromRoot]
+  );
+
+  return { getIntervalPositionsFromRoot, buildHighlightsForInterval };
+}
+
 function StatusBadge({ status }) {
   const configs = {
     idle: { text: "Ready", bg: "rgba(0,0,0,0.06)", color: "#999" },
