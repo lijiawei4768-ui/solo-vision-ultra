@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 // 必须导入这些，否则你代码里的 <Settings />, <Mic /> 等图标会让页面白屏
 import { 
   Settings, Music, Mic, MicOff, ChevronRight, 
