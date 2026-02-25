@@ -775,6 +775,12 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const [showIntervalPicker, setShowIntervalPicker] = useState(false);
   const prevMidiRef = useRef(null);
 
+  const { buildHighlightsForInterval } = useFretboardLogic({
+    tuning,
+    minFret: settings.minFret,
+    maxFret: settings.maxFret,
+  });
+
   const genQuestion = useCallback(() => {
     // Pick random root
     const rootStr = Math.floor(Math.random() * 6);
@@ -826,18 +832,23 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
 
   const { rms } = useAudioEngine({ onPitchDetected, enabled: audioEnabled });
 
-  const highlights = question ? [
-    { string: question.rootStr, fret: question.rootFret, role: "root", label: "R" },
-    ...(status === "correct" ? [{ string: question.targetStr, fret: question.targetFret, role: "target", label: INTERVAL_LABELS[question.intervalIdx] }] : []),
-  ] : [];
-
-  const arcPair = (status === "correct" && question) ? {
-    from: { string: question.rootStr, fret: question.rootFret },
-    to: { string: question.targetStr, fret: question.targetFret },
-  } : null;
-
   const rootNote = question ? midiToNote(getMidi(question.rootStr, question.rootFret, tuning)) : "—";
   const intervalName = question ? INTERVAL_LABELS[question.intervalIdx] : "—";
+
+  const rootPos = question
+    ? { string: question.rootStr, fret: question.rootFret }
+    : null;
+
+  const { highlights, arcPairs } = useMemo(() => {
+    if (!question || !rootPos) return { highlights: [], arcPairs: [] };
+    return buildHighlightsForInterval(rootPos, question.intervalIdx, {
+      showNoteNames: settings.showNoteNames,
+      rootLabel: rootNote,
+      intervalLabel: INTERVAL_LABELS[question.intervalIdx],
+    });
+  }, [question, rootPos, buildHighlightsForInterval, settings.showNoteNames, rootNote]);
+
+  const arcPair = status === "correct" && arcPairs.length > 0 ? arcPairs[0] : null;
 
   return (
     <TrainerLayout title="Interval Trainer" subtitle="Find the interval" status={status} streak={streak} score={score} rms={rms} audioEnabled={audioEnabled}>
