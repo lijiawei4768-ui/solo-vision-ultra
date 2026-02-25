@@ -2,9 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 
-// 如果 Vercel 还是报错找不到 index.css，就删掉下面这一行
-import './index.css' 
-
+// 我们彻底删掉了对 index.css 的引用，因为样式已经在 index.html 里通过 CDN 解决了
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <App />
