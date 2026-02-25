@@ -775,6 +775,8 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const [showIntervalPicker, setShowIntervalPicker] = useState(false);
   // 显示模式：learning = 一开始就显示目标音程；blind = 弹对之后才显示
   const [revealMode, setRevealMode] = useState("learning"); // "learning" | "blind"
+  // 记录“你实际弹对”的物理位置，用来对齐弧线和高亮
+  const [hitPos, setHitPos] = useState(null); // {string, fret} | null
   const prevMidiRef = useRef(null);
 
   const genQuestion = useCallback(() => {
@@ -799,6 +801,7 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
     const pref = candidates.filter(c => Math.abs(c.string - rootStr) <= 2);
     const pick = (pref.length ? pref : candidates)[Math.floor(Math.random() * (pref.length || candidates.length))];
     setQuestion({ rootStr, rootFret, targetStr: pick.string, targetFret: pick.fret, intervalIdx: iv });
+    setHitPos(null);
     setStatus("listening");
   }, [intervals, settings, tuning]);
 
@@ -811,10 +814,34 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
     prevMidiRef.current = midi;
     const targetMidi = getMidi(question.targetStr, question.targetFret, tuning);
     if (Math.abs(midi - targetMidi) <= 1) {
+      // 找到最贴近你实际弹出的物理位置，用来展示弧线和高亮
+      const candidates = [];
+      for (let s = 0; s < 6; s++) {
+        for (let f = settings.minFret; f <= settings.maxFret; f++) {
+          const fm = getMidi(s, f, tuning);
+          if (Math.abs(fm - midi) <= 1) {
+            candidates.push({ string: s, fret: f });
+          }
+        }
+      }
+      let best = null;
+      let bestScore = Infinity;
+      for (const c of candidates) {
+        const ds = Math.abs(c.string - question.rootStr);
+        const df = Math.abs(c.fret - question.rootFret);
+        const score = ds * 2 + df; // 稍微偏向“同弦附近”
+        if (score < bestScore) {
+          bestScore = score;
+          best = c;
+        }
+      }
+      if (best) setHitPos(best);
+
       setStatus("correct");
       setStreak(s => s + 1);
       setScore(s => ({ correct: s.correct + 1, total: s.total + 1 }));
-      setTimeout(genQuestion, 1200);
+      // 多停留一点时间，让反馈更清晰
+      setTimeout(genQuestion, 1500);
     } else {
       const rootMidi = getMidi(question.rootStr, question.rootFret, tuning);
       if (Math.abs(midi - rootMidi) > 1) {
@@ -834,6 +861,16 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
   const shouldRevealTarget =
     revealMode === "learning" || (revealMode === "blind" && status === "correct");
 
+  // 用“你真正弹中的位置”优先作为目标展示；在学习模式下还没弹对时，退回出题时的预设位置
+  const targetDisplayPos = (() => {
+    if (!question) return null;
+    if (hitPos && shouldRevealTarget) return hitPos;
+    if (revealMode === "learning") {
+      return { string: question.targetStr, fret: question.targetFret };
+    }
+    return null;
+  })();
+
   const highlights = question ? [
     {
       string: question.rootStr,
@@ -841,17 +878,19 @@ function IntervalTrainer({ settings, tuning, audioEnabled }) {
       role: "root",
       label: "R",
     },
-    ...(shouldRevealTarget ? [{
-      string: question.targetStr,
-      fret: question.targetFret,
+    ...(targetDisplayPos && shouldRevealTarget ? [{
+      string: targetDisplayPos.string,
+      fret: targetDisplayPos.fret,
       role: "target",
-      label: INTERVAL_LABELS[question.intervalIdx],
+      label: settings.showNoteNames
+        ? midiToNote(getMidi(targetDisplayPos.string, targetDisplayPos.fret, tuning))
+        : INTERVAL_LABELS[question.intervalIdx],
     }] : []),
   ] : [];
 
-  const arcPair = (shouldRevealTarget && question) ? {
+  const arcPair = (shouldRevealTarget && question && targetDisplayPos) ? {
     from: { string: question.rootStr, fret: question.rootFret },
-    to: { string: question.targetStr, fret: question.targetFret },
+    to: { string: targetDisplayPos.string, fret: targetDisplayPos.fret },
   } : null;
 
   return (
